@@ -482,7 +482,7 @@ public class MOEAD {
 		// Check whether to apply mutation or crossover
 		double r = random.nextDouble();
 		int chosenOperation;
-		if (r <= crossoverProbability) // Update this to consider multiple operations XXX
+		if (r <= crossoverProbability)
 			chosenOperation = CROSSOVER;
 		else if (r <= crossoverProbability + mutationProbability)
 			chosenOperation = MUTATION;

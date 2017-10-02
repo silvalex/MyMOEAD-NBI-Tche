@@ -39,7 +39,7 @@ public class IndirectLocalSearchOperator extends LocalSearchOperator {
 				score = init.calculateScore(neighbour, problemIndex);
 
 	    	// If the neighbour has a better fitness score than the current best, set current best to be neighbour
-	        if (score > bestScore) {
+	        if (score < bestScore) {
 	        	bestScore = score;
 	        	bestNeighbour = neighbour;
 	        }
