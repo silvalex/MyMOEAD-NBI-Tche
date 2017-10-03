@@ -10,7 +10,7 @@ public class IndirectLocalSearchOperator extends LocalSearchOperator {
 	@Override
 	public Individual doSearch(Individual ind, MOEAD init, int problemIndex) {
 		if (!(ind instanceof IndirectIndividual))
-			throw new RuntimeException("IndirectMutationOperator can only work on objects of type IndirectIndividual.");
+			throw new RuntimeException("IndirectLocalSearchOperator can only work on objects of type IndirectIndividual.");
 		IndirectIndividual indirect = (IndirectIndividual) ind;
 
 		// Choose a fixed index to swap other services with during local search
