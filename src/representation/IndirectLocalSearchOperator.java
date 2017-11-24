@@ -17,6 +17,7 @@ public class IndirectLocalSearchOperator extends LocalSearchOperator {
 		int indexA = init.random.nextInt(indirect.getGenome().length);
 
 		IndirectIndividual bestNeighbour = (IndirectIndividual) indirect.clone();
+		boolean replaced = false;
 		double bestScore;
 		if (MOEAD.tchebycheff)
 			bestScore = init.calculateTchebycheffScore(bestNeighbour, problemIndex);
@@ -40,10 +41,15 @@ public class IndirectLocalSearchOperator extends LocalSearchOperator {
 
 	    	// If the neighbour has a better fitness score than the current best, set current best to be neighbour
 	        if (score < bestScore) {
+	        	replaced = true;
 	        	bestScore = score;
 	        	bestNeighbour = neighbour;
 	        }
 		}
+		if (replaced)
+			System.out.println("It was replaced!");
+		else
+			System.out.println("It was not replaced");
 		return bestNeighbour;
 	}
 

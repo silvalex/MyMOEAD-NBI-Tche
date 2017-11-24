@@ -2,12 +2,14 @@ package moead;
 
 import static java.lang.Math.abs;
 
+import java.awt.Point;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -50,7 +52,7 @@ public class MOEAD {
 	public static double crossoverProbability = 0.8;
 	public static double mutationProbability = 0.1;
 	public static double localSearchProbability = 0.1;
-	public static StoppingCriteria stopCrit = new GenerationStoppingCriteria(generations);
+	public static StoppingCriteria stopCrit;
 	public static Individual indType = new IndirectIndividual();
 	public static MutationOperator mutOperator = new IndirectMutationOperator();
 	public static CrossoverOperator crossOperator = new IndirectCrossoverOperator();
@@ -63,6 +65,8 @@ public class MOEAD {
 	public static String serviceTask = "problem.xml";
 	public static boolean tchebycheff = true;
 	public static boolean dynamicNormalisation = false;
+	public static boolean tournamentSelection = false;
+	public static int tournamentSize = 2;
 	// Fitness weights
 	public static double w1 = 0.25;
 	public static double w2 = 0.25;
@@ -81,10 +85,10 @@ public class MOEAD {
 
 
 	// Internal state
-	private Individual[] population = new Individual[popSize];
-	private double[][] weights = new double[popSize][numObjectives];
+	private Individual[] population;
+	private double[][] weights;
 	private double idealPoint[];
-	private int[][] neighbourhood = new int[popSize][numNeighbours];
+	private int[][] neighbourhood;
 	private Map<String, Service> serviceMap = new HashMap<String, Service>();
 	public Map<String, TaxonomyNode> taxonomyMap = new HashMap<String, TaxonomyNode>();
 	public Set<String> taskInput;
@@ -95,6 +99,7 @@ public class MOEAD {
 	public Service endServ;
 	public Random random;
 	public int numLayers;
+	public double[][] extremePoints;
 	// Normalisation bounds
 	public double minAvailability = 0.0;
 	public double maxAvailability = -1.0;
@@ -106,8 +111,8 @@ public class MOEAD {
 	public double maxCost = -1.0;
 
 	// Statistics
-	private long[] breedingTime = new long[generations];
-	private long[] evaluationTime = new long[generations];
+	private long[] breedingTime;
+	private long[] evaluationTime;
 	FileWriter outWriter;
 	FileWriter frontWriter;
 
@@ -180,6 +185,12 @@ public class MOEAD {
 				break;
 			case "numLocalSearchTries":
 				numLocalSearchTries = Integer.valueOf(param);
+				break;
+			case "tournamentSelection":
+				tournamentSelection = Boolean.valueOf(param);
+				break;
+			case "tournamentSize":
+				tournamentSize = Integer.valueOf(param);
 				break;
 			case "outFileName":
 				outFileName = param;
@@ -313,6 +324,14 @@ public class MOEAD {
 	 * Creates weight vectors, calculates neighbourhoods, and generates an initial population.
 	 */
 	public void initialise() {
+		stopCrit = new GenerationStoppingCriteria(generations);
+		population = new Individual[popSize];
+		weights = new double[popSize][numObjectives];
+		neighbourhood = new int[popSize][numNeighbours];
+		breedingTime = new long[generations];
+		evaluationTime = new long[generations];
+		extremePoints = new double[numObjectives][numObjectives];
+
 		// Create stat writers
 		try {
 			File outFile = new File(outFileName);
@@ -351,6 +370,9 @@ public class MOEAD {
 		// Ensure that mutation, crossover, and local search probabilities add up to 1
 		if (mutationProbability + crossoverProbability + localSearchProbability != 1.0)
 			throw new RuntimeException("The probabilities for mutation, crossover, and local search should add up to 1.");
+		// Ensure that tournament size is smaller than the neighbourhood
+		if (tournamentSelection && tournamentSize > numNeighbours)
+			throw new RuntimeException("The tournament size exceeds the size of the neighbourhood.");
 		// Initialise random number
 		random = new Random(seed);
 		// Initialise the reference point
@@ -363,6 +385,36 @@ public class MOEAD {
 		// Generate an initial population
 		for (int i = 0; i < population.length; i++)
 			population[i] = indType.generateIndividual();
+		// Estimate the extreme points of the current population
+		estimateExtremePoints();
+	}
+
+	/**
+	 * Finds the the extreme points for the current population, which will be later used
+	 * in the Tchebycheff calculations.
+	 */
+	private void estimateExtremePoints() {
+		// Begin by resetting extreme points
+		for (int i = 0; i < numObjectives; i++) {
+			for (int j = 0; j < numObjectives; j++) {
+				extremePoints[i][j] = Double.MAX_VALUE;
+			}
+		}
+
+		// Now go through the whole population
+		for (Individual ind : population) {
+			double[] indObjs = ind.getObjectiveValues();
+			// For each objective, check whether it is lower than the current extreme point
+			for (int i = 0; i < numObjectives; i++) {
+				if (indObjs[i] < extremePoints[i][i]) {
+					// If it is, copy all dimensions as the current extreme point
+					for (int j = 0; j < numObjectives; j++) {
+						extremePoints[i][j] = indObjs[j];
+					}
+				}
+			}
+		}
+
 	}
 
 	/**
@@ -496,7 +548,7 @@ public class MOEAD {
 		// Perform crossover if that is the chosen operation
 		if (chosenOperation == CROSSOVER) {
 			// Select a neighbour at random
-			int neighbourIndex = random.nextInt(numNeighbours);
+			int neighbourIndex = selectNeighbour(index);
 			Individual neighbour = population[neighbourIndex];
 			return crossOperator.doCrossover(original.clone(), neighbour.clone(), this);
 		}
@@ -510,6 +562,64 @@ public class MOEAD {
 		}
 		else {
 			throw new RuntimeException("Invalid operation selected.");
+		}
+	}
+
+	private int selectNeighbour(int index) {
+
+		// If using tournament selection
+		if (tournamentSelection) {
+			// Select the specified number of neighbours for the tournament
+			Set<Integer> tournamentIndices = new HashSet<Integer>();
+			while (tournamentIndices.size() < tournamentSize) {
+				int neighbourIndex = random.nextInt(numNeighbours);
+				if (!tournamentIndices.contains(neighbourIndex)) {
+					tournamentIndices.add(neighbourIndex);
+				}
+			}
+
+			// Find corresponding candidate for neighbour and its score for our particular subproblem
+			List<CandidateScorePair> candScoreList = new ArrayList<CandidateScorePair>();
+			for (int neighbourIndex : tournamentIndices) {
+				int populationIndex = neighbourhood[index][neighbourIndex];
+				Individual neighbour = population[populationIndex];
+		    	double score;
+				if (MOEAD.tchebycheff)
+					score = calculateTchebycheffScore(neighbour, index);
+				else
+					score = calculateScore(neighbour, index);
+				candScoreList.add(new CandidateScorePair(score,populationIndex));
+			}
+
+			// Sort candidates according to their scores
+			Collections.sort(candScoreList);
+			// Return the one with the highest score
+			return candScoreList.get(0).populationIndex;
+		}
+		// Else, use random selection
+		else {
+			int neighbourIndex = random.nextInt(numNeighbours);
+			int populationIndex = neighbourhood[index][neighbourIndex];
+			return populationIndex;
+		}
+	}
+
+	// Helper class for tournament selection
+	class CandidateScorePair implements Comparable<CandidateScorePair>{
+		public double score;
+		public int populationIndex;
+		public CandidateScorePair(double score, int populationIndex){
+			this.score = score;
+			this.populationIndex = populationIndex;
+		}
+		@Override
+		public int compareTo(CandidateScorePair o) {
+			if (score > o.score)
+				return -1;
+			else if (score < o.score)
+				return 1;
+			else
+				return 0;
 		}
 	}
 
